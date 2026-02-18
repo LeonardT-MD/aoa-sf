@@ -28,19 +28,19 @@ def parse_xyz(s: str) -> np.ndarray:
 
 def make_plot(out):
     pivot = out.pivot
-    cranial = out.superior
-    caudal = out.inferior
+    cranial = out.cranial
+    caudal = out.caudal
     medial = out.medial
     lateral = out.lateral
     centroid = out.sf_centroid
 
-    # Ordered SF polygon vertices on the fitted plane (non-self-crossing)
-    sf_poly = out.sf_polygon_ordered_3d  # (4,3)
+    # SF polygon already projected onto fitted plane and ordered
+    sf_poly = out.sf_polygon_projected_ordered_3d  # (4,3)
     sf_outline = np.vstack([sf_poly, sf_poly[0]])
 
     fig = go.Figure()
 
-    # --- Points + labels ---
+    # Points
     labels = ["Pivot", "Cranial", "Caudal", "Medial", "Lateral", "SF centroid"]
     pts = np.vstack([pivot, cranial, caudal, medial, lateral, centroid])
 
@@ -55,7 +55,7 @@ def make_plot(out):
         )
     )
 
-    # --- Rays: pivot -> each point ---
+    # Rays pivot->each point
     for p, name in [
         (cranial, "Pivot→Cranial"),
         (caudal, "Pivot→Caudal"),
@@ -71,8 +71,7 @@ def make_plot(out):
             )
         )
 
-    # --- SF area only (semi-transparent) ---
-    # Triangulate quad as two triangles: (0,1,2) and (0,2,3)
+    # SF area only (semi-transparent), triangulate quad as two triangles
     fig.add_trace(
         go.Mesh3d(
             x=sf_poly[:, 0],
@@ -82,11 +81,10 @@ def make_plot(out):
             j=[1, 2],
             k=[2, 3],
             opacity=0.20,
-            name="SF area (fitted plane)",
+            name="SF area (best-fit plane, projected)",
         )
     )
 
-    # SF outline
     fig.add_trace(
         go.Scatter3d(
             x=sf_outline[:, 0], y=sf_outline[:, 1], z=sf_outline[:, 2],
@@ -108,24 +106,14 @@ def make_plot(out):
     return fig
 
 
-def build_csv_single_row(
-    out,
-    unit_label: str,
-    coord_system: str,
-    rescale_mode: str,
-    rescale_value: float | None,
-) -> str:
-    """
-    One-row CSV for manuscript/supplementary export.
-    Includes labels for units and coordinate system.
-    """
+def build_csv_single_row(out, unit_label: str, coord_system: str, rescale_mode: str, rescale_value: float | None) -> str:
     headers = [
         "coordinate_system",
         "units",
         "rescale_mode",
         "rescale_value",
-        "Vertical_AoA_deg",          # cranial–caudal
-        "Horizontal_AoA_deg",        # medial–lateral
+        "Vertical_AoA_deg",            # cranial–caudal
+        "Horizontal_AoA_deg",          # medial–lateral
         "SF_area_units2",
         "SF_centroid_x",
         "SF_centroid_y",
@@ -143,46 +131,43 @@ def build_csv_single_row(
         unit_label,
         rescale_mode,
         "" if rescale_value is None else f"{rescale_value}",
-        f"{out.aoa_si_deg:.6f}",
-        f"{out.aoa_ml_deg:.6f}",
+        f"{out.aoa_vertical_deg:.6f}",
+        f"{out.aoa_horizontal_deg:.6f}",
         f"{out.sf_area:.6f}",
         f"{out.sf_centroid[0]:.6f}",
         f"{out.sf_centroid[1]:.6f}",
         f"{out.sf_centroid[2]:.6f}",
         f"{out.centroid_to_pivot:.6f}",
         f"{out.pivot[0]:.6f}", f"{out.pivot[1]:.6f}", f"{out.pivot[2]:.6f}",
-        f"{out.superior[0]:.6f}", f"{out.superior[1]:.6f}", f"{out.superior[2]:.6f}",
-        f"{out.inferior[0]:.6f}", f"{out.inferior[1]:.6f}", f"{out.inferior[2]:.6f}",
+        f"{out.cranial[0]:.6f}", f"{out.cranial[1]:.6f}", f"{out.cranial[2]:.6f}",
+        f"{out.caudal[0]:.6f}", f"{out.caudal[1]:.6f}", f"{out.caudal[2]:.6f}",
         f"{out.medial[0]:.6f}", f"{out.medial[1]:.6f}", f"{out.medial[2]:.6f}",
         f"{out.lateral[0]:.6f}", f"{out.lateral[1]:.6f}", f"{out.lateral[2]:.6f}",
     ]
 
     buf = io.StringIO()
-    writer = csv.writer(buf)
-    writer.writerow(headers)
-    writer.writerow(row)
+    w = csv.writer(buf)
+    w.writerow(headers)
+    w.writerow(row)
     return buf.getvalue()
 
 
 def build_csv_points_long(out, unit_label: str, coord_system: str) -> str:
-    """
-    Long-format CSV with one row per point.
-    """
     headers = ["coordinate_system", "units", "label", "x", "y", "z"]
     rows = [
         [coord_system, unit_label, "pivot", *out.pivot.tolist()],
-        [coord_system, unit_label, "cranial", *out.superior.tolist()],
-        [coord_system, unit_label, "caudal", *out.inferior.tolist()],
+        [coord_system, unit_label, "cranial", *out.cranial.tolist()],
+        [coord_system, unit_label, "caudal", *out.caudal.tolist()],
         [coord_system, unit_label, "medial", *out.medial.tolist()],
         [coord_system, unit_label, "lateral", *out.lateral.tolist()],
         [coord_system, unit_label, "SF_centroid", *out.sf_centroid.tolist()],
     ]
 
     buf = io.StringIO()
-    writer = csv.writer(buf)
-    writer.writerow(headers)
+    w = csv.writer(buf)
+    w.writerow(headers)
     for r in rows:
-        writer.writerow(r)
+        w.writerow(r)
     return buf.getvalue()
 
 
@@ -197,7 +182,6 @@ with st.sidebar:
         index=0,
         help="Label the coordinate convention used to define X/Y/Z.",
     )
-
     if coord_system == "Custom":
         coord_system_custom = st.text_input("Custom coordinate system label", value="Custom")
         coord_system_effective = coord_system_custom.strip() or "Custom"
@@ -209,40 +193,38 @@ with st.sidebar:
     st.caption("Use `x, y, z` or `x y z` format.")
 
     pivot_s = st.text_input("Pivot", value="125, 95, 145")
-    sup_s = st.text_input("Cranial", value="126.3, 101, 151")
-    inf_s = st.text_input("Caudal", value="122.9, 93.8, 150.1")
-    med_s = st.text_input("Medial", value="121.2, 98.4, 147.6")
-    lat_s = st.text_input("Lateral", value="130.1, 92.5, 149.0")
+    cr_s = st.text_input("Cranial", value="126.3, 101, 151")
+    ca_s = st.text_input("Caudal", value="122.9, 93.8, 150.1")
+    me_s = st.text_input("Medial", value="121.2, 98.4, 147.6")
+    la_s = st.text_input("Lateral", value="130.1, 92.5, 149.0")
 
     st.divider()
-    st.header("Rescaling")
-
+    st.header("Rescaling (ray-preserving)")
     rescale_mode = st.selectbox("Rescale mode", ["none", "absolute", "relative"], index=0)
 
-    radius = None
-    factor = None
+    abs_dist = None
+    rel_factor = None
     if rescale_mode == "absolute":
-        radius = st.number_input(
-            f"Absolute radius ({unit_label})",
+        abs_dist = st.number_input(
+            f"New distance from pivot ({unit_label})",
             min_value=0.0,
             value=20.0,
-            step=1.0
+            step=1.0,
+            help="All 4 points are moved along their original pivot→point rays to this distance. AoA is invariant."
         )
     elif rescale_mode == "relative":
-        factor = st.number_input(
+        rel_factor = st.number_input(
             "Relative factor (e.g., 0.8 or 1.2)",
             min_value=0.0,
             value=1.0,
-            step=0.05
+            step=0.05,
+            help="Each point distance from pivot is multiplied by this factor along its original ray. AoA is invariant."
         )
 
     compute_btn = st.button("Compute", type="primary", use_container_width=True)
 
-# Auto-compute on first load too
 if "computed_once" not in st.session_state:
     st.session_state["computed_once"] = False
-
-# Store last output for export
 if "last_out" not in st.session_state:
     st.session_state["last_out"] = None
 if "last_export_meta" not in st.session_state:
@@ -251,24 +233,24 @@ if "last_export_meta" not in st.session_state:
 if compute_btn or (not st.session_state["computed_once"]):
     try:
         pivot = parse_xyz(pivot_s)
-        cranial = parse_xyz(sup_s)
-        caudal = parse_xyz(inf_s)
-        medial = parse_xyz(med_s)
-        lateral = parse_xyz(lat_s)
+        cranial = parse_xyz(cr_s)
+        caudal = parse_xyz(ca_s)
+        medial = parse_xyz(me_s)
+        lateral = parse_xyz(la_s)
 
         if rescale_mode == "absolute":
-            rescale = {"mode": "absolute", "radius": float(radius)}
-            rescale_value = float(radius)
+            rescale = {"mode": "absolute", "distance": float(abs_dist)}
+            rescale_value = float(abs_dist)
         elif rescale_mode == "relative":
-            rescale = {"mode": "relative", "factor": float(factor)}
-            rescale_value = float(factor)
+            rescale = {"mode": "relative", "factor": float(rel_factor)}
+            rescale_value = float(rel_factor)
         else:
             rescale = {"mode": "none"}
             rescale_value = None
 
         out = compute_aosf(
             pivot=pivot,
-            superior=cranial,   # backend naming remains superior/inferior
+            superior=cranial,
             inferior=caudal,
             medial=medial,
             lateral=lateral,
@@ -297,22 +279,13 @@ if out is not None and meta is not None:
         st.subheader("Results")
         st.caption(f"Coordinate system: **{meta['coord_system']}** · Units: **{meta['unit_label']}**")
 
-        st.metric("Vertical AoA (Cranial–Caudal) (deg)", f"{out.aoa_si_deg:.3f}")
-        st.metric("Horizontal AoA (Medial–Lateral) (deg)", f"{out.aoa_ml_deg:.3f}")
+        st.metric("Vertical AoA (Cranial–Caudal) (deg)", f"{out.aoa_vertical_deg:.3f}")
+        st.metric("Horizontal AoA (Medial–Lateral) (deg)", f"{out.aoa_horizontal_deg:.3f}")
         st.metric(f"SF area ({meta['unit_label']}²)", f"{out.sf_area:.3f}")
         st.metric(f"Centroid → Pivot ({meta['unit_label']})", f"{out.centroid_to_pivot:.3f}")
 
         st.write("**SF centroid (x, y, z):**")
         st.code(f"{out.sf_centroid[0]:.6f}, {out.sf_centroid[1]:.6f}, {out.sf_centroid[2]:.6f}")
-
-        with st.expander("Triangle reports (sides + angles)"):
-            st.write("**Vertical triangle (Cranial–Caudal)** (AoA at pivot)")
-            st.json(out.si_report.sides)
-            st.json(out.si_report.angles_deg)
-
-            st.write("**Horizontal triangle (Medial–Lateral)** (AoA at pivot)")
-            st.json(out.ml_report.sides)
-            st.json(out.ml_report.angles_deg)
 
         st.divider()
         st.subheader("Export")
@@ -338,7 +311,6 @@ if out is not None and meta is not None:
             mime="text/csv",
             use_container_width=True,
         )
-
         st.download_button(
             label="Download CSV (long format: one row per point)",
             data=csv_long,
@@ -349,7 +321,7 @@ if out is not None and meta is not None:
 
     with col2:
         st.subheader("Interactive 3D plot")
-        st.caption("Points + pivot rays + SF area (semi-transparent).")
+        st.caption("Points + pivot rays + SF (plane-projected, semi-transparent).")
         fig = make_plot(out)
         st.plotly_chart(fig, use_container_width=True)
 else:
