@@ -14,6 +14,7 @@ from .geometry import (
     order_points_clockwise_2d,
     polygon_area_centroid_2d,
     lift_from_2d,
+    rescale_points_on_fitted_plane_equal_radius,
 )
 
 
@@ -44,6 +45,9 @@ class AoSFOutput:
     medial: np.ndarray
     lateral: np.ndarray
 
+    # For plotting SF as a non-self-crossing polygon
+    sf_polygon_ordered_3d: np.ndarray  # shape (4,3), ordered on fitted plane
+
 
 def _aoa_at_pivot(p_a: np.ndarray, p_b: np.ndarray, pivot: np.ndarray):
     """
@@ -70,14 +74,18 @@ def compute_aosf(
 ) -> AoSFOutput:
     """
     Compute:
-      - AoA_SI at pivot (superior–inferior pair)
-      - AoA_ML at pivot (medial–lateral pair)
-      - Surgical freedom area (SF) and centroid from the 4-point polygon
+      - AoA_SI at pivot (superior–inferior pair)  -> "Vertical" in GUI
+      - AoA_ML at pivot (medial–lateral pair)    -> "Horizontal" in GUI
+      - Surgical freedom area (SF) on fitted plane from the 4 cardinal points
 
     Rescale options:
       {"mode":"none"} (default)
-      {"mode":"absolute","radius": float}  -> all points set to fixed radius from pivot
-      {"mode":"relative","factor": float}  -> each point radius multiplied by factor
+      {"mode":"absolute","radius": float}
+          - SF vertices are placed on the *fitted plane* and constrained to have
+            ||vertex - pivot|| == radius (sphere-plane circle construction).
+      {"mode":"relative","factor": float}
+          - each point radius from pivot multiplied by factor along pivot->point ray
+            (then SF computed on fitted plane from resulting 4 points).
     """
     pivot = _as_xyz(pivot)
     s = _as_xyz(superior)
@@ -90,36 +98,38 @@ def compute_aosf(
 
     if mode == "absolute":
         r = float(rescale["radius"])
-        s = rescale_point_from_pivot(s, pivot, r)
-        i = rescale_point_from_pivot(i, pivot, r)
-        m = rescale_point_from_pivot(m, pivot, r)
-        l = rescale_point_from_pivot(l, pivot, r)
+        # enforce: points lie on fitted plane and are all exactly distance r from pivot
+        P4 = np.vstack([s, i, m, l])
+        P4r = rescale_points_on_fitted_plane_equal_radius(P4, pivot, r)
+        s, i, m, l = P4r[0], P4r[1], P4r[2], P4r[3]
+
     elif mode == "relative":
         f = float(rescale["factor"])
         s = rescale_point_from_pivot(s, pivot, distance(s, pivot) * f)
         i = rescale_point_from_pivot(i, pivot, distance(i, pivot) * f)
         m = rescale_point_from_pivot(m, pivot, distance(m, pivot) * f)
         l = rescale_point_from_pivot(l, pivot, distance(l, pivot) * f)
+
     elif mode == "none":
         pass
     else:
         raise ValueError(f"Unknown rescale mode: {mode}")
 
-    # AoA at pivot
+    # AoA at pivot (computed from the effective points)
     aoa_si, si_rep = _aoa_at_pivot(s, i, pivot)
     aoa_ml, ml_rep = _aoa_at_pivot(m, l, pivot)
 
-    # SF polygon area in best-fit plane
+    # SF polygon area on fitted plane:
     poly3 = np.vstack([s, i, m, l])
     origin, e1, e2, _n = pca_plane_basis(poly3)
     poly2 = project_to_2d(poly3, origin, e1, e2)
 
     order = order_points_clockwise_2d(poly2)
     poly2o = poly2[order]
+    poly3o = np.vstack([lift_from_2d(pt, origin, e1, e2) for pt in poly2o])
 
     sf_area, centroid2 = polygon_area_centroid_2d(poly2o)
     centroid3 = lift_from_2d(centroid2, origin, e1, e2)
-
     c2p = float(np.linalg.norm(centroid3 - pivot))
 
     return AoSFOutput(
@@ -132,4 +142,5 @@ def compute_aosf(
         sf_centroid=centroid3,
         centroid_to_pivot=c2p,
         superior=s, inferior=i, medial=m, lateral=l,
+        sf_polygon_ordered_3d=poly3o,
     )
