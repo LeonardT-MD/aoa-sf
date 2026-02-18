@@ -28,14 +28,17 @@ def parse_xyz(s: str) -> np.ndarray:
 
 def make_plot(out):
     pivot = out.pivot
-    S, I, M, L = out.superior, out.inferior, out.medial, out.lateral
+    cranial = out.superior      # formerly "superior"
+    caudal = out.inferior       # formerly "inferior"
+    medial = out.medial
+    lateral = out.lateral
     C = out.sf_centroid
 
     fig = go.Figure()
 
-    # Points
-    labels = ["Pivot", "S", "I", "M", "L", "SF centroid"]
-    pts = np.vstack([pivot, S, I, M, L, C])
+    # --- Points + labels ---
+    labels = ["Pivot", "Cranial", "Caudal", "Medial", "Lateral", "SF centroid"]
+    pts = np.vstack([pivot, cranial, caudal, medial, lateral, C])
 
     fig.add_trace(
         go.Scatter3d(
@@ -44,59 +47,88 @@ def make_plot(out):
             text=labels,
             textposition="top center",
             marker=dict(size=6),
-            name="Points",
+            name="Landmarks",
         )
     )
 
-    # SI triangle edges
-    tri_si = np.vstack([S, I, pivot, S])
+    # --- Rays: pivot -> each point ---
+    for p, name in [
+        (cranial, "Pivot→Cranial"),
+        (caudal, "Pivot→Caudal"),
+        (medial, "Pivot→Medial"),
+        (lateral, "Pivot→Lateral"),
+    ]:
+        seg = np.vstack([pivot, p])
+        fig.add_trace(
+            go.Scatter3d(
+                x=seg[:, 0], y=seg[:, 1], z=seg[:, 2],
+                mode="lines",
+                name=name,
+            )
+        )
+
+    # --- Vertical AoA triangle (Cranial–Caudal–Pivot) ---
+    tri_v = np.vstack([cranial, caudal, pivot, cranial])
     fig.add_trace(
         go.Scatter3d(
-            x=tri_si[:, 0], y=tri_si[:, 1], z=tri_si[:, 2],
+            x=tri_v[:, 0], y=tri_v[:, 1], z=tri_v[:, 2],
             mode="lines",
-            name="AoA_SI triangle",
+            name="Vertical AoA triangle",
         )
     )
     fig.add_trace(
         go.Mesh3d(
-            x=[S[0], I[0], pivot[0]],
-            y=[S[1], I[1], pivot[1]],
-            z=[S[2], I[2], pivot[2]],
+            x=[cranial[0], caudal[0], pivot[0]],
+            y=[cranial[1], caudal[1], pivot[1]],
+            z=[cranial[2], caudal[2], pivot[2]],
             opacity=0.20,
-            name="AoA_SI surface",
+            name="Vertical AoA surface",
         )
     )
 
-    # ML triangle edges
-    tri_ml = np.vstack([M, L, pivot, M])
+    # --- Horizontal AoA triangle (Medial–Lateral–Pivot) ---
+    tri_h = np.vstack([medial, lateral, pivot, medial])
     fig.add_trace(
         go.Scatter3d(
-            x=tri_ml[:, 0], y=tri_ml[:, 1], z=tri_ml[:, 2],
+            x=tri_h[:, 0], y=tri_h[:, 1], z=tri_h[:, 2],
             mode="lines",
-            name="AoA_ML triangle",
+            name="Horizontal AoA triangle",
         )
     )
     fig.add_trace(
         go.Mesh3d(
-            x=[M[0], L[0], pivot[0]],
-            y=[M[1], L[1], pivot[1]],
-            z=[M[2], L[2], pivot[2]],
+            x=[medial[0], lateral[0], pivot[0]],
+            y=[medial[1], lateral[1], pivot[1]],
+            z=[medial[2], lateral[2], pivot[2]],
             opacity=0.20,
-            name="AoA_ML surface",
+            name="Horizontal AoA surface",
         )
     )
 
-    # SF polygon as quad split into two triangles: (S, I, M) and (S, M, L)
+    # --- SF polygon (semi-transparent) on best-fit plane ---
+    # The 4 cardinal points are the ones used to fit the best-fit plane in compute_aosf().
+    # We fill the quad (cranial, caudal, medial, lateral) as two triangles.
     fig.add_trace(
         go.Mesh3d(
-            x=[S[0], I[0], M[0], S[0], M[0], L[0]],
-            y=[S[1], I[1], M[1], S[1], M[1], L[1]],
-            z=[S[2], I[2], M[2], S[2], M[2], L[2]],
+            x=[cranial[0], caudal[0], medial[0], cranial[0], medial[0], lateral[0]],
+            y=[cranial[1], caudal[1], medial[1], cranial[1], medial[1], lateral[1]],
+            z=[cranial[2], caudal[2], medial[2], cranial[2], medial[2], lateral[2]],
             i=[0, 3],
             j=[1, 4],
             k=[2, 5],
-            opacity=0.12,
-            name="SF polygon (filled)",
+            opacity=0.18,
+            name="SF area (best-fit plane)",
+        )
+    )
+
+    # Outline SF polygon edges for clarity (not necessarily the same ordering used in SF computation,
+    # but visually helpful; SF is computed from plane-projected ordered polygon in the backend).
+    sf_outline = np.vstack([cranial, caudal, medial, lateral, cranial])
+    fig.add_trace(
+        go.Scatter3d(
+            x=sf_outline[:, 0], y=sf_outline[:, 1], z=sf_outline[:, 2],
+            mode="lines",
+            name="SF outline",
         )
     )
 
@@ -123,24 +155,25 @@ def build_csv_single_row(
     """
     One-row CSV for manuscript/supplementary export.
     Includes labels for units and coordinate system.
+    Uses cranial/caudal terminology in headers.
     """
     headers = [
         "coordinate_system",
         "units",
         "rescale_mode",
         "rescale_value",
-        "AoA_SI_deg",
-        "AoA_ML_deg",
+        "Vertical_AoA_deg",          # cranial–caudal
+        "Horizontal_AoA_deg",        # medial–lateral
         "SF_area_units2",
         "SF_centroid_x",
         "SF_centroid_y",
         "SF_centroid_z",
         "Centroid_to_pivot_units",
         "pivot_x", "pivot_y", "pivot_z",
-        "S_x", "S_y", "S_z",
-        "I_x", "I_y", "I_z",
-        "M_x", "M_y", "M_z",
-        "L_x", "L_y", "L_z",
+        "cranial_x", "cranial_y", "cranial_z",
+        "caudal_x", "caudal_y", "caudal_z",
+        "medial_x", "medial_y", "medial_z",
+        "lateral_x", "lateral_y", "lateral_z",
     ]
 
     row = [
@@ -172,14 +205,15 @@ def build_csv_single_row(
 def build_csv_points_long(out, unit_label: str, coord_system: str) -> str:
     """
     Long-format CSV with one row per point.
+    Uses cranial/caudal terminology in labels.
     """
     headers = ["coordinate_system", "units", "label", "x", "y", "z"]
     rows = [
         [coord_system, unit_label, "pivot", *out.pivot.tolist()],
-        [coord_system, unit_label, "S", *out.superior.tolist()],
-        [coord_system, unit_label, "I", *out.inferior.tolist()],
-        [coord_system, unit_label, "M", *out.medial.tolist()],
-        [coord_system, unit_label, "L", *out.lateral.tolist()],
+        [coord_system, unit_label, "cranial", *out.superior.tolist()],
+        [coord_system, unit_label, "caudal", *out.inferior.tolist()],
+        [coord_system, unit_label, "medial", *out.medial.tolist()],
+        [coord_system, unit_label, "lateral", *out.lateral.tolist()],
         [coord_system, unit_label, "SF_centroid", *out.sf_centroid.tolist()],
     ]
 
@@ -191,7 +225,7 @@ def build_csv_points_long(out, unit_label: str, coord_system: str) -> str:
     return buf.getvalue()
 
 
-st.title("AoA (S–I / M–L) + Surgical Freedom (SF)")
+st.title("AoA (Vertical / Horizontal) + Surgical Freedom (SF)")
 
 with st.sidebar:
     st.header("Metadata")
@@ -214,10 +248,10 @@ with st.sidebar:
     st.caption("Use `x, y, z` or `x y z` format.")
 
     pivot_s = st.text_input("Pivot", value="125, 95, 145")
-    sup_s = st.text_input("Superior (S)", value="126.3, 101, 151")
-    inf_s = st.text_input("Inferior (I)", value="122.9, 93.8, 150.1")
-    med_s = st.text_input("Medial (M)", value="121.2, 98.4, 147.6")
-    lat_s = st.text_input("Lateral (L)", value="130.1, 92.5, 149.0")
+    sup_s = st.text_input("Cranial", value="126.3, 101, 151")
+    inf_s = st.text_input("Caudal", value="122.9, 93.8, 150.1")
+    med_s = st.text_input("Medial", value="121.2, 98.4, 147.6")
+    lat_s = st.text_input("Lateral", value="130.1, 92.5, 149.0")
 
     st.divider()
     st.header("Rescaling")
@@ -256,10 +290,10 @@ if "last_export_meta" not in st.session_state:
 if compute_btn or (not st.session_state["computed_once"]):
     try:
         pivot = parse_xyz(pivot_s)
-        S = parse_xyz(sup_s)
-        I = parse_xyz(inf_s)
-        M = parse_xyz(med_s)
-        L = parse_xyz(lat_s)
+        cranial = parse_xyz(sup_s)
+        caudal = parse_xyz(inf_s)
+        medial = parse_xyz(med_s)
+        lateral = parse_xyz(lat_s)
 
         if rescale_mode == "absolute":
             rescale = {"mode": "absolute", "radius": float(radius)}
@@ -273,10 +307,10 @@ if compute_btn or (not st.session_state["computed_once"]):
 
         out = compute_aosf(
             pivot=pivot,
-            superior=S,
-            inferior=I,
-            medial=M,
-            lateral=L,
+            superior=cranial,   # backend uses superior/inferior naming
+            inferior=caudal,
+            medial=medial,
+            lateral=lateral,
             rescale=rescale,
         )
 
@@ -302,8 +336,8 @@ if out is not None and meta is not None:
         st.subheader("Results")
         st.caption(f"Coordinate system: **{meta['coord_system']}** · Units: **{meta['unit_label']}**")
 
-        st.metric("AoA_SI (deg)", f"{out.aoa_si_deg:.3f}")
-        st.metric("AoA_ML (deg)", f"{out.aoa_ml_deg:.3f}")
+        st.metric("Vertical AoA (Cranial–Caudal) (deg)", f"{out.aoa_si_deg:.3f}")
+        st.metric("Horizontal AoA (Medial–Lateral) (deg)", f"{out.aoa_ml_deg:.3f}")
         st.metric(f"SF area ({meta['unit_label']}²)", f"{out.sf_area:.3f}")
         st.metric(f"Centroid → Pivot ({meta['unit_label']})", f"{out.centroid_to_pivot:.3f}")
 
@@ -311,11 +345,11 @@ if out is not None and meta is not None:
         st.code(f"{out.sf_centroid[0]:.6f}, {out.sf_centroid[1]:.6f}, {out.sf_centroid[2]:.6f}")
 
         with st.expander("Triangle reports (sides + angles)"):
-            st.write("**S–I triangle** (AoA at pivot)")
+            st.write("**Vertical triangle (Cranial–Caudal)** (AoA at pivot)")
             st.json(out.si_report.sides)
             st.json(out.si_report.angles_deg)
 
-            st.write("**M–L triangle** (AoA at pivot)")
+            st.write("**Horizontal triangle (Medial–Lateral)** (AoA at pivot)")
             st.json(out.ml_report.sides)
             st.json(out.ml_report.angles_deg)
 
