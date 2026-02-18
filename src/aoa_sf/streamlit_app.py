@@ -28,17 +28,21 @@ def parse_xyz(s: str) -> np.ndarray:
 
 def make_plot(out):
     pivot = out.pivot
-    cranial = out.superior      # formerly "superior"
-    caudal = out.inferior       # formerly "inferior"
+    cranial = out.superior
+    caudal = out.inferior
     medial = out.medial
     lateral = out.lateral
-    C = out.sf_centroid
+    centroid = out.sf_centroid
+
+    # Ordered SF polygon vertices on the fitted plane (non-self-crossing)
+    sf_poly = out.sf_polygon_ordered_3d  # (4,3)
+    sf_outline = np.vstack([sf_poly, sf_poly[0]])
 
     fig = go.Figure()
 
     # --- Points + labels ---
     labels = ["Pivot", "Cranial", "Caudal", "Medial", "Lateral", "SF centroid"]
-    pts = np.vstack([pivot, cranial, caudal, medial, lateral, C])
+    pts = np.vstack([pivot, cranial, caudal, medial, lateral, centroid])
 
     fig.add_trace(
         go.Scatter3d(
@@ -47,7 +51,7 @@ def make_plot(out):
             text=labels,
             textposition="top center",
             marker=dict(size=6),
-            name="Landmarks",
+            name="Points",
         )
     )
 
@@ -67,63 +71,22 @@ def make_plot(out):
             )
         )
 
-    # --- Vertical AoA triangle (Cranial–Caudal–Pivot) ---
-    tri_v = np.vstack([cranial, caudal, pivot, cranial])
-    fig.add_trace(
-        go.Scatter3d(
-            x=tri_v[:, 0], y=tri_v[:, 1], z=tri_v[:, 2],
-            mode="lines",
-            name="Vertical AoA triangle",
-        )
-    )
+    # --- SF area only (semi-transparent) ---
+    # Triangulate quad as two triangles: (0,1,2) and (0,2,3)
     fig.add_trace(
         go.Mesh3d(
-            x=[cranial[0], caudal[0], pivot[0]],
-            y=[cranial[1], caudal[1], pivot[1]],
-            z=[cranial[2], caudal[2], pivot[2]],
+            x=sf_poly[:, 0],
+            y=sf_poly[:, 1],
+            z=sf_poly[:, 2],
+            i=[0, 0],
+            j=[1, 2],
+            k=[2, 3],
             opacity=0.20,
-            name="Vertical AoA surface",
+            name="SF area (fitted plane)",
         )
     )
 
-    # --- Horizontal AoA triangle (Medial–Lateral–Pivot) ---
-    tri_h = np.vstack([medial, lateral, pivot, medial])
-    fig.add_trace(
-        go.Scatter3d(
-            x=tri_h[:, 0], y=tri_h[:, 1], z=tri_h[:, 2],
-            mode="lines",
-            name="Horizontal AoA triangle",
-        )
-    )
-    fig.add_trace(
-        go.Mesh3d(
-            x=[medial[0], lateral[0], pivot[0]],
-            y=[medial[1], lateral[1], pivot[1]],
-            z=[medial[2], lateral[2], pivot[2]],
-            opacity=0.20,
-            name="Horizontal AoA surface",
-        )
-    )
-
-    # --- SF polygon (semi-transparent) on best-fit plane ---
-    # The 4 cardinal points are the ones used to fit the best-fit plane in compute_aosf().
-    # We fill the quad (cranial, caudal, medial, lateral) as two triangles.
-    fig.add_trace(
-        go.Mesh3d(
-            x=[cranial[0], caudal[0], medial[0], cranial[0], medial[0], lateral[0]],
-            y=[cranial[1], caudal[1], medial[1], cranial[1], medial[1], lateral[1]],
-            z=[cranial[2], caudal[2], medial[2], cranial[2], medial[2], lateral[2]],
-            i=[0, 3],
-            j=[1, 4],
-            k=[2, 5],
-            opacity=0.18,
-            name="SF area (best-fit plane)",
-        )
-    )
-
-    # Outline SF polygon edges for clarity (not necessarily the same ordering used in SF computation,
-    # but visually helpful; SF is computed from plane-projected ordered polygon in the backend).
-    sf_outline = np.vstack([cranial, caudal, medial, lateral, cranial])
+    # SF outline
     fig.add_trace(
         go.Scatter3d(
             x=sf_outline[:, 0], y=sf_outline[:, 1], z=sf_outline[:, 2],
@@ -155,7 +118,6 @@ def build_csv_single_row(
     """
     One-row CSV for manuscript/supplementary export.
     Includes labels for units and coordinate system.
-    Uses cranial/caudal terminology in headers.
     """
     headers = [
         "coordinate_system",
@@ -205,7 +167,6 @@ def build_csv_single_row(
 def build_csv_points_long(out, unit_label: str, coord_system: str) -> str:
     """
     Long-format CSV with one row per point.
-    Uses cranial/caudal terminology in labels.
     """
     headers = ["coordinate_system", "units", "label", "x", "y", "z"]
     rows = [
@@ -307,7 +268,7 @@ if compute_btn or (not st.session_state["computed_once"]):
 
         out = compute_aosf(
             pivot=pivot,
-            superior=cranial,   # backend uses superior/inferior naming
+            superior=cranial,   # backend naming remains superior/inferior
             inferior=caudal,
             medial=medial,
             lateral=lateral,
@@ -388,7 +349,7 @@ if out is not None and meta is not None:
 
     with col2:
         st.subheader("Interactive 3D plot")
-        st.caption("Rotate/zoom to inspect the geometry.")
+        st.caption("Points + pivot rays + SF area (semi-transparent).")
         fig = make_plot(out)
         st.plotly_chart(fig, use_container_width=True)
 else:
