@@ -1,0 +1,10 @@
+cff-version: 1.2.0
+message: "If you use this software, please cite it as below."
+title: "aoa-sf"
+version: 0.1.0
+date-released: 2026-02-18
+authors:
+  - family-names: "Tariciotti"
+    given-names: "Leonardo"
+repository-code: "https://github.com/<YOUR_ORG_OR_USERNAME>/aoa-sf"
+license: MIT
