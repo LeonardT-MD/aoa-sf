@@ -94,6 +94,19 @@ def lift_from_2d(pt2: np.ndarray, origin: np.ndarray, e1: np.ndarray, e2: np.nda
     return origin + e1 * pt2[0] + e2 * pt2[1]
 
 
+def project_point_to_plane(point: np.ndarray, plane_origin: np.ndarray, plane_normal: np.ndarray) -> np.ndarray:
+    """
+    Orthogonal projection of a 3D point onto a plane defined by (plane_origin, plane_normal).
+    """
+    point = _as_xyz(point)
+    plane_origin = _as_xyz(plane_origin)
+    plane_normal = _as_xyz(plane_normal)
+    plane_normal = plane_normal / (np.linalg.norm(plane_normal) + EPS)
+    v = point - plane_origin
+    dist_signed = float(v @ plane_normal)
+    return point - dist_signed * plane_normal
+
+
 def order_points_clockwise_2d(pts2: np.ndarray) -> np.ndarray:
     """
     Returns indices sorting points clockwise around their mean.
@@ -124,3 +137,61 @@ def polygon_area_centroid_2d(pts2_ordered: np.ndarray) -> Tuple[float, np.ndarra
     Cx = (1.0 / (6.0 * A)) * np.sum((x + x2) * cross)
     Cy = (1.0 / (6.0 * A)) * np.sum((y + y2) * cross)
     return float(abs(A)), np.array([Cx, Cy], dtype=float)
+
+
+def rescale_points_on_fitted_plane_equal_radius(
+    points4: np.ndarray,
+    pivot: np.ndarray,
+    radius: float
+) -> np.ndarray:
+    """
+    Absolute rescale for SF *on the fitted plane* with equal distance constraint:
+
+    - Fit plane to the 4 points (S/I/M/L).
+    - Compute pivot projection p0 onto that plane.
+    - The set of points on the plane at distance `radius` from pivot is a circle
+      (sphere-plane intersection) centered at p0 with in-plane radius:
+          r_plane = sqrt(radius^2 - d^2)
+      where d = distance(pivot, p0).
+
+    - For each original vertex, take its projection onto the plane to define an
+      in-plane direction from p0; then place the rescaled point on the circle
+      along that direction.
+
+    Returns 4 rescaled points (N=4,3) on the fitted plane, each with ||p - pivot|| == radius.
+    """
+    P = np.asarray(points4, dtype=float)
+    if P.shape != (4, 3):
+        raise ValueError("points4 must be shape (4,3)")
+
+    pivot = _as_xyz(pivot)
+    radius = float(radius)
+    if radius <= 0:
+        raise ValueError("radius must be > 0")
+
+    origin, e1, e2, n = pca_plane_basis(P)
+    p0 = project_point_to_plane(pivot, origin, n)
+    d = float(np.linalg.norm(pivot - p0))
+    if radius <= d + 1e-9:
+        raise ValueError(
+            f"Cannot place points on plane at distance {radius:.3f} from pivot: "
+            f"pivot-to-plane distance is {d:.3f}. Choose radius > {d:.3f}."
+        )
+
+    r_plane = float(np.sqrt(max(radius**2 - d**2, 0.0)))
+
+    # Directions: from p0 to each point projected on plane
+    P_proj = np.vstack([project_point_to_plane(p, origin, n) for p in P])
+
+    out = []
+    for pp in P_proj:
+        v = pp - p0
+        nv = float(np.linalg.norm(v))
+        if nv < EPS:
+            # Degenerate: pick a stable in-plane direction (e1)
+            v = e1
+            nv = float(np.linalg.norm(v))
+        v = v / (nv + EPS)
+        out.append(p0 + v * r_plane)
+
+    return np.vstack(out)
