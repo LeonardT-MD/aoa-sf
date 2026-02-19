@@ -51,6 +51,46 @@ class AoSFOutput:
     # Plane-projected polygon for SF plotting (ordered, non-self-crossing)
     sf_polygon_projected_ordered_3d: np.ndarray  # (4,3)
 
+    # Human-readable textual output
+    text_report: str
+
+
+def format_report(
+    *,
+    coord_system: str,
+    units: str,
+    rescale_mode: str,
+    rescale_distance: Optional[float],
+    out: "AoSFOutput",
+) -> str:
+    """
+    Produce a publication-friendly textual report that can be printed, pasted
+    into notes, or saved in logs/supplementary material.
+    """
+    lines = []
+    lines.append("AoA–SF results")
+    lines.append(f"Coordinate system: {coord_system}")
+    lines.append(f"Units: {units}")
+    lines.append(f"Rescale mode: {rescale_mode}")
+    if rescale_mode == "absolute":
+        lines.append(f"Rescale distance from pivot: {rescale_distance:.6f} {units}")
+    lines.append("")
+    lines.append("Angles of Attack (deg)")
+    lines.append(f"  Vertical (Cranial–Caudal):   {out.aoa_vertical_deg:.6f}")
+    lines.append(f"  Horizontal (Medial–Lateral): {out.aoa_horizontal_deg:.6f}")
+    lines.append("")
+    lines.append(f"Surgical Freedom area: {out.sf_area:.6f} {units}^2")
+    lines.append(f"SF centroid (x, y, z): {out.sf_centroid[0]:.6f}, {out.sf_centroid[1]:.6f}, {out.sf_centroid[2]:.6f}")
+    lines.append(f"Centroid → Pivot: {out.centroid_to_pivot:.6f} {units}")
+    lines.append("")
+    lines.append("Effective points used (x, y, z)")
+    lines.append(f"  Pivot:   {out.pivot[0]:.6f}, {out.pivot[1]:.6f}, {out.pivot[2]:.6f}")
+    lines.append(f"  Cranial: {out.cranial[0]:.6f}, {out.cranial[1]:.6f}, {out.cranial[2]:.6f}")
+    lines.append(f"  Caudal:  {out.caudal[0]:.6f}, {out.caudal[1]:.6f}, {out.caudal[2]:.6f}")
+    lines.append(f"  Medial:  {out.medial[0]:.6f}, {out.medial[1]:.6f}, {out.medial[2]:.6f}")
+    lines.append(f"  Lateral: {out.lateral[0]:.6f}, {out.lateral[1]:.6f}, {out.lateral[2]:.6f}")
+    return "\n".join(lines)
+
 
 def compute_aosf(
     pivot,
@@ -59,15 +99,18 @@ def compute_aosf(
     medial,
     lateral,
     rescale: Optional[Dict[str, Any]] = None,
+    *,
+    coord_system: str = "LPS",
+    units: str = "mm",
 ) -> AoSFOutput:
     """
     Spec-accurate behavior:
 
-    1) Rescaling is performed along the original pivot->point ray (alignment preserved),
-       using a NEW DISTANCE from pivot (absolute) or a multiplicative factor (relative).
-       => AoA angles MUST NOT change under rescaling.
+    1) Optional rescaling is ray-preserving:
+       each point is moved along its original pivot->point direction to a new
+       distance from pivot. This preserves AoA angles (invariance).
 
-    2) AoA (vertical/horizontal) computed purely from ray vectors in 3D:
+    2) AoA computed purely from ray vectors in 3D:
          Vertical  = angle between (cranial-pivot) and (caudal-pivot)
          Horizontal= angle between (medial-pivot)  and (lateral-pivot)
 
@@ -76,86 +119,3 @@ def compute_aosf(
        - orthogonally project points to plane
        - compute polygon area in plane 2D coords (shoelace) after CW ordering
        - centroid returned in 3D on the plane
-
-    rescale dict:
-      {"mode":"none"} (default)
-      {"mode":"absolute","distance": float}  # new distance from pivot for ALL 4 points
-      {"mode":"relative","factor": float}    # multiply each original distance by factor
-    """
-    pivot = as_xyz(pivot)
-    cranial = as_xyz(superior)
-    caudal = as_xyz(inferior)
-    medial_p = as_xyz(medial)
-    lateral_p = as_xyz(lateral)
-
-    rescale = rescale or {"mode": "none"}
-    mode = str(rescale.get("mode", "none")).lower()
-
-    # --- 1) Ray-preserving rescale (angles invariant) ---
-    if mode == "absolute":
-        new_d = float(rescale["distance"])
-        cranial = rescale_point_along_ray(cranial, pivot, new_d)
-        caudal = rescale_point_along_ray(caudal, pivot, new_d)
-        medial_p = rescale_point_along_ray(medial_p, pivot, new_d)
-        lateral_p = rescale_point_along_ray(lateral_p, pivot, new_d)
-
-    elif mode == "relative":
-        f = float(rescale["factor"])
-        if f <= 0:
-            raise ValueError("factor must be > 0")
-        cranial = rescale_point_along_ray(cranial, pivot, norm(cranial - pivot) * f)
-        caudal = rescale_point_along_ray(caudal, pivot, norm(caudal - pivot) * f)
-        medial_p = rescale_point_along_ray(medial_p, pivot, norm(medial_p - pivot) * f)
-        lateral_p = rescale_point_along_ray(lateral_p, pivot, norm(lateral_p - pivot) * f)
-
-    elif mode == "none":
-        pass
-    else:
-        raise ValueError(f"Unknown rescale mode: {mode}")
-
-    # --- 2) AoA angles in 3D (ray-based) ---
-    v_cr = cranial - pivot
-    v_ca = caudal - pivot
-    v_me = medial_p - pivot
-    v_la = lateral_p - pivot
-
-    aoa_vertical = angle_between(v_cr, v_ca)
-    aoa_horizontal = angle_between(v_me, v_la)
-
-    vertical_report = TriangleReport(angles_deg={"AoA": float(aoa_vertical)})
-    horizontal_report = TriangleReport(angles_deg={"AoA": float(aoa_horizontal)})
-
-    # --- 3) SF on best-fit plane with minimal displacement ---
-    P = np.vstack([cranial, caudal, medial_p, lateral_p])
-    origin, e1, e2, n = best_fit_plane_basis(P)
-
-    # orthogonal projection = minimal displacement
-    Pproj = np.vstack([project_point_to_plane(p, origin, n) for p in P])
-
-    # plane coordinates
-    P2 = project_to_plane_2d(Pproj, origin, e1, e2)
-    order = order_points_clockwise_2d(P2)
-    P2o = P2[order]
-
-    # ordered projected polygon in 3D (for plotting SF)
-    P3o = np.vstack([lift_from_plane_2d(pt, origin, e1, e2) for pt in P2o])
-
-    sf_area, centroid2 = polygon_area_centroid_2d(P2o)
-    centroid3 = lift_from_plane_2d(centroid2, origin, e1, e2)
-    c2p = float(np.linalg.norm(centroid3 - pivot))
-
-    return AoSFOutput(
-        pivot=pivot,
-        aoa_vertical_deg=float(aoa_vertical),
-        aoa_horizontal_deg=float(aoa_horizontal),
-        vertical_report=vertical_report,
-        horizontal_report=horizontal_report,
-        sf_area=float(sf_area),
-        sf_centroid=centroid3,
-        centroid_to_pivot=c2p,
-        cranial=cranial,
-        caudal=caudal,
-        medial=medial_p,
-        lateral=lateral_p,
-        sf_polygon_projected_ordered_3d=P3o,
-    )
