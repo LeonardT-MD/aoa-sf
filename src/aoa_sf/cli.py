@@ -12,9 +12,8 @@ def main():
         description="Compute AoA (S–I and M–L) and Surgical Freedom (SF) from pivot + superior/inferior/medial/lateral points."
     )
     ap.add_argument("--in", dest="infile", required=True, help="JSON file with pivot, superior, inferior, medial, lateral arrays.")
-    ap.add_argument("--rescale", choices=["none", "absolute", "relative"], default="none")
+    ap.add_argument("--rescale", choices=["none", "absolute"], default="none")
     ap.add_argument("--radius", type=float, default=None, help="Used if --rescale absolute")
-    ap.add_argument("--factor", type=float, default=None, help="Used if --rescale relative")
     ap.add_argument("--plot", default=None, help="Optional path to save a PNG figure (matplotlib).")
     args = ap.parse_args()
 
@@ -25,10 +24,6 @@ def main():
         if args.radius is None:
             raise SystemExit("--radius is required for --rescale absolute")
         rescale = {"mode": "absolute", "radius": args.radius}
-    elif args.rescale == "relative":
-        if args.factor is None:
-            raise SystemExit("--factor is required for --rescale relative")
-        rescale = {"mode": "relative", "factor": args.factor}
     else:
         rescale = {"mode": "none"}
 
