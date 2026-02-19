@@ -175,7 +175,7 @@ st.title("AoA (Vertical / Horizontal) + Surgical Freedom (SF)")
 
 with st.sidebar:
     st.header("Metadata")
-    unit_label = st.text_input("Units label", value="mm", help="e.g., mm, cm, vox, m")
+    unit_label = st.text_input("Units label", value="mm", help="e.g., mm, cm, voxels, m")
     coord_system = st.selectbox(
         "Coordinate system",
         ["LPS", "RAS", "Scanner", "Custom"],
@@ -200,25 +200,16 @@ with st.sidebar:
 
     st.divider()
     st.header("Rescaling (ray-preserving)")
-    rescale_mode = st.selectbox("Rescale mode", ["none", "absolute", "relative"], index=0)
+    rescale_mode = st.selectbox("Rescale mode", ["none", "absolute"], index=0)
 
     abs_dist = None
-    rel_factor = None
     if rescale_mode == "absolute":
         abs_dist = st.number_input(
             f"New distance from pivot ({unit_label})",
             min_value=0.0,
             value=20.0,
             step=1.0,
-            help="All 4 points are moved along their original pivot→point rays to this distance. AoA is invariant."
-        )
-    elif rescale_mode == "relative":
-        rel_factor = st.number_input(
-            "Relative factor (e.g., 0.8 or 1.2)",
-            min_value=0.0,
-            value=1.0,
-            step=0.05,
-            help="Each point distance from pivot is multiplied by this factor along its original ray. AoA is invariant."
+            help="All 4 points move along their original pivot→point rays to this distance. AoA is invariant."
         )
 
     compute_btn = st.button("Compute", type="primary", use_container_width=True)
@@ -241,9 +232,6 @@ if compute_btn or (not st.session_state["computed_once"]):
         if rescale_mode == "absolute":
             rescale = {"mode": "absolute", "distance": float(abs_dist)}
             rescale_value = float(abs_dist)
-        elif rescale_mode == "relative":
-            rescale = {"mode": "relative", "factor": float(rel_factor)}
-            rescale_value = float(rel_factor)
         else:
             rescale = {"mode": "none"}
             rescale_value = None
@@ -255,6 +243,8 @@ if compute_btn or (not st.session_state["computed_once"]):
             medial=medial,
             lateral=lateral,
             rescale=rescale,
+            coord_system=coord_system_effective,
+            units=unit_label.strip() or "units",
         )
 
         st.session_state["computed_once"] = True
@@ -277,18 +267,27 @@ if out is not None and meta is not None:
 
     with col1:
         st.subheader("Results")
-        st.caption(f"Coordinate system: **{meta['coord_system']}** · Units: **{meta['unit_label']}**")
+        st.caption(f"Coordinate system: {meta['coord_system']} · Units: {meta['unit_label']}")
 
         st.metric("Vertical AoA (Cranial–Caudal) (deg)", f"{out.aoa_vertical_deg:.3f}")
         st.metric("Horizontal AoA (Medial–Lateral) (deg)", f"{out.aoa_horizontal_deg:.3f}")
         st.metric(f"SF area ({meta['unit_label']}²)", f"{out.sf_area:.3f}")
         st.metric(f"Centroid → Pivot ({meta['unit_label']})", f"{out.centroid_to_pivot:.3f}")
 
-        st.write("**SF centroid (x, y, z):**")
-        st.code(f"{out.sf_centroid[0]:.6f}, {out.sf_centroid[1]:.6f}, {out.sf_centroid[2]:.6f}")
+        st.divider()
+        st.subheader("Text report")
+        st.text_area("Report", value=out.text_report, height=320)
+
+        st.download_button(
+            label="Download report (.txt)",
+            data=out.text_report,
+            file_name="aoa_sf_report.txt",
+            mime="text/plain",
+            use_container_width=True,
+        )
 
         st.divider()
-        st.subheader("Export")
+        st.subheader("Export CSV")
 
         csv_single = build_csv_single_row(
             out=out,
@@ -321,8 +320,8 @@ if out is not None and meta is not None:
 
     with col2:
         st.subheader("Interactive 3D plot")
-        st.caption("Points + pivot rays + SF (plane-projected, semi-transparent).")
+        st.caption("Points + pivot rays + SF (projected onto best-fit plane).")
         fig = make_plot(out)
         st.plotly_chart(fig, use_container_width=True)
 else:
-    st.info("Enter points and click **Compute** to see results and enable export.")
+    st.info("Enter points and click Compute to see results and enable export.")
